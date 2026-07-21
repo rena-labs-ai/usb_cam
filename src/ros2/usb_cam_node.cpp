@@ -434,7 +434,14 @@ void UsbCamNode::update()
       take_and_send_image_mjpeg() :
       take_and_send_image();
     if (!isSuccessful) {
-      RCLCPP_WARN_ONCE(this->get_logger(), "USB camera did not respond in time.");
+      // The grab already waited out the 5 s select() timeout: a camera silent
+      // that long is dead (device revoked by USB re-enumeration, or wedged),
+      // and this handle will never deliver again. Exit so a supervisor
+      // (launch respawn) reopens the re-created device node.
+      RCLCPP_FATAL(
+        this->get_logger(),
+        "no frame within the capture timeout; exiting so the supervisor can respawn");
+      rclcpp::shutdown();
     }
   }
 }
