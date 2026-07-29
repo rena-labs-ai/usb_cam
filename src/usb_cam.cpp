@@ -42,6 +42,7 @@ extern "C" {
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "opencv2/imgproc.hpp"
@@ -204,6 +205,26 @@ void UsbCam::stop_capturing()
   }
 }
 
+namespace
+{
+// VIDIOC_STREAMON can transiently fail (EBUSY/ENOSPC) when several UVC cameras
+// negotiate USB bandwidth at once. Retry with a short backoff before giving up,
+// so a startup race self-corrects instead of aborting the node.
+void start_stream_with_retry(int fd, enum v4l2_buf_type type)
+{
+  constexpr int max_attempts = 20;  // ~10s at the backoff below
+  for (int attempt = 1; ; ++attempt) {
+    if (-1 != usb_cam::utils::xioctl(fd, VIDIOC_STREAMON, &type)) {
+      return;
+    }
+    if (attempt >= max_attempts) {
+      throw std::runtime_error("Unable to start stream");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+}
+}  // namespace
+
 void UsbCam::start_capturing()
 {
   if (m_is_capturing) {return;}
@@ -232,9 +253,7 @@ void UsbCam::start_capturing()
 
       // Start the stream
       type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-      if (-1 == usb_cam::utils::xioctl(m_fd, VIDIOC_STREAMON, &type)) {
-        throw std::runtime_error("Unable to start stream");
-      }
+      start_stream_with_retry(m_fd, type);
       break;
     case io_method_t::IO_METHOD_USERPTR:
       for (i = 0; i < m_number_of_buffers; ++i) {
@@ -255,9 +274,7 @@ void UsbCam::start_capturing()
 
       type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
-      if (-1 == usb_cam::utils::xioctl(m_fd, VIDIOC_STREAMON, &type)) {
-        throw std::runtime_error("Unable to start stream");
-      }
+      start_stream_with_retry(m_fd, type);
       break;
     case io_method_t::IO_METHOD_UNKNOWN:
       throw std::invalid_argument("IO method unknown");
