@@ -116,6 +116,7 @@ typedef struct
   // or guvcview
   std::string pixel_format_name;
   std::string av_device_format;
+  int rotation;  // degrees clockwise; raw_mjpeg rotates its JPEG losslessly
   int image_width;
   int image_height;
   int framerate;

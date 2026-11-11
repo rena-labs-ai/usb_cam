@@ -26,11 +26,14 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include <map>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "usb_cam/camera_info_rotation.hpp"
 #include "usb_cam/usb_cam_node.hpp"
 #include "usb_cam/utils.hpp"
 
@@ -71,6 +74,7 @@ UsbCamNode::UsbCamNode(const rclcpp::NodeOptions & node_options)
   this->declare_parameter("io_method", "mmap");
   this->declare_parameter("pixel_format", "yuyv");
   this->declare_parameter("av_device_format", "YUV422P");
+  this->declare_parameter("rotation", 0);  // degrees clockwise, raw_mjpeg only
   this->declare_parameter("video_device", "/dev/video0");
   this->declare_parameter("brightness", 50);  // 0-255, -1 "leave alone"
   this->declare_parameter("contrast", -1);    // 0-255, -1 "leave alone"
@@ -102,6 +106,9 @@ UsbCamNode::~UsbCamNode()
   m_timer.reset();
   m_service_capture.reset();
   m_parameters_callback_handle.reset();
+  if (m_rotator) {
+    tjDestroy(m_rotator);
+  }
 
   delete (m_camera);
 }
@@ -189,6 +196,23 @@ void UsbCamNode::init()
       "camera_info", rclcpp::QoS(100));
   }
 
+  if (m_parameters.rotation != 0) {
+    static const std::map<int, int> operations{
+      {90, TJXOP_ROT90}, {180, TJXOP_ROT180}, {270, TJXOP_ROT270}};
+    const auto operation = operations.find(m_parameters.rotation);
+    if (m_parameters.pixel_format_name != "raw_mjpeg" || operation == operations.end()) {
+      RCLCPP_ERROR(
+        this->get_logger(), "rotation %d: only 90, 180 or 270, and only with raw_mjpeg",
+        m_parameters.rotation);
+      rclcpp::shutdown();
+      return;
+    }
+    m_rotation.op = operation->second;
+    // Whole JPEG blocks only: a frame that would have to be cropped fails instead.
+    m_rotation.options = TJXOPT_PERFECT;
+    m_rotator = tjInitTransform();
+  }
+
   m_image_msg->header.frame_id = m_parameters.frame_id;
   RCLCPP_INFO(
     this->get_logger(), "Starting '%s' (%s) at %dx%d via %s (%s) at %i FPS",
@@ -231,7 +255,7 @@ void UsbCamNode::get_params()
       "camera_name", "camera_info_url", "frame_id", "framerate", "image_height", "image_width",
       "io_method", "pixel_format", "av_device_format", "video_device", "brightness", "contrast",
       "saturation", "sharpness", "gain", "auto_white_balance", "white_balance", "autoexposure",
-      "exposure", "autofocus", "focus"
+      "exposure", "autofocus", "focus", "rotation"
     }
   );
 
@@ -259,6 +283,8 @@ void UsbCamNode::assign_params(const std::vector<rclcpp::Parameter> & parameters
       m_parameters.io_method_name = parameter.value_to_string();
     } else if (parameter.get_name() == "pixel_format") {
       m_parameters.pixel_format_name = parameter.value_to_string();
+    } else if (parameter.get_name() == "rotation") {
+      m_parameters.rotation = parameter.as_int();
     } else if (parameter.get_name() == "av_device_format") {
       m_parameters.av_device_format = parameter.value_to_string();
     } else if (parameter.get_name() == "video_device") {
@@ -397,17 +423,55 @@ bool UsbCamNode::take_and_send_image_mjpeg()
   m_camera->get_image(reinterpret_cast<char *>(&m_compressed_img_msg->data[0]));
   // The buffer is sized for raw pixels; the frame is the JPEG in its first bytes_used bytes.
   m_compressed_img_msg->data.resize(m_camera->get_image_bytes_used());
+  if (m_rotator) {
+    rotate_jpeg(m_compressed_img_msg->data);
+  }
 
   auto stamp = m_camera->get_image_timestamp();
   m_compressed_img_msg->header.stamp.sec = stamp.tv_sec;
   m_compressed_img_msg->header.stamp.nanosec = stamp.tv_nsec;
 
   *m_camera_info_msg = m_camera_info->getCameraInfo();
+  if (m_rotator) {
+    rotate_camera_info(*m_camera_info_msg);
+  }
   m_camera_info_msg->header = m_compressed_img_msg->header;
 
   m_compressed_image_publisher->publish(*m_compressed_img_msg);
   m_compressed_cam_info_publisher->publish(*m_camera_info_msg);
   return true;
+}
+
+/// Rotate a JPEG in place without decoding it: libjpeg-turbo moves and transposes its DCT blocks.
+void UsbCamNode::rotate_jpeg(std::vector<uint8_t> & jpeg)
+{
+  unsigned char * rotated = nullptr;
+  unsigned long rotated_size = 0;  // NOLINT(runtime/int): TurboJPEG's type
+  const int result = tjTransform(
+    m_rotator, jpeg.data(), jpeg.size(), 1, &rotated, &rotated_size, &m_rotation, 0);
+  // A warning still leaves a complete JPEG, as a decoder would accept it.
+  if (result != 0 && tjGetErrorCode(m_rotator) == TJERR_FATAL) {
+    tjFree(rotated);
+    throw std::runtime_error(std::string("JPEG rotation failed: ") + tjGetErrorStr2(m_rotator));
+  }
+  jpeg.assign(rotated, rotated + rotated_size);
+  tjFree(rotated);
+}
+
+/// The calibration describes the camera's own frame; turn it with the JPEG.
+void UsbCamNode::rotate_camera_info(sensor_msgs::msg::CameraInfo & info) const
+{
+  const ImageSize input{info.width, info.height};
+  const auto output = rotated_image_size(input, m_parameters.rotation);
+  info.width = output.width;
+  info.height = output.height;
+  if (has_intrinsic_matrix(info.k)) {
+    info.k = rotated_intrinsic_k(info.k, input, m_parameters.rotation);
+  }
+  if (has_projection_matrix(info.p)) {
+    info.p = rotated_projection_p(info.p, input, m_parameters.rotation);
+  }
+  info.d = rotated_distortion_d(info.d, info.distortion_model, m_parameters.rotation);
 }
 
 rcl_interfaces::msg::SetParametersResult UsbCamNode::parameters_callback(

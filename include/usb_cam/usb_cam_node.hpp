@@ -35,6 +35,8 @@
 #include <string>
 #include <vector>
 
+#include <turbojpeg.h>
+
 #include "camera_info_manager/camera_info_manager.hpp"
 #include "image_transport/image_transport.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -68,6 +70,8 @@ public:
   void update();
   bool take_and_send_image();
   bool take_and_send_image_mjpeg();
+  void rotate_jpeg(std::vector<uint8_t> & jpeg);
+  void rotate_camera_info(sensor_msgs::msg::CameraInfo & info) const;
 
   rcl_interfaces::msg::SetParametersResult parameters_callback(
     const std::vector<rclcpp::Parameter> & parameters);
@@ -86,6 +90,9 @@ public:
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr m_compressed_cam_info_publisher;
 
   parameters_t m_parameters;
+  // Set only when rotating a raw_mjpeg stream.
+  tjhandle m_rotator = nullptr;
+  tjtransform m_rotation{};
 
   sensor_msgs::msg::CameraInfo::SharedPtr m_camera_info_msg;
   std::shared_ptr<camera_info_manager::CameraInfoManager> m_camera_info;

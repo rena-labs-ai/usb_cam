@@ -85,8 +85,10 @@ else()
     src/ros2/usb_cam_node.cpp
   )
 
+  # raw_mjpeg rotation: libjpeg-turbo's lossless transform
+  find_library(TURBOJPEG_LIBRARY turbojpeg REQUIRED)
   target_link_libraries(${PROJECT_NAME}_node
-    ${PROJECT_NAME})
+    ${PROJECT_NAME} ${TURBOJPEG_LIBRARY})
 
   ## Use node to generate an executable
   rclcpp_components_register_node(${PROJECT_NAME}_node
@@ -117,6 +119,10 @@ if(BUILD_TESTING)
     ament_add_gtest(test_pixel_formats
       test/test_pixel_formats.cpp)
     target_link_libraries(test_pixel_formats
+      ${PROJECT_NAME})
+    ament_add_gtest(test_camera_info_rotation
+      test/test_camera_info_rotation.cpp)
+    target_link_libraries(test_camera_info_rotation
       ${PROJECT_NAME})
     # TODO(flynneva): rewrite this test in another PR
     # Integration tests
