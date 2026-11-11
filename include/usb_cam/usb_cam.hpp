@@ -141,6 +141,8 @@ typedef struct
   size_t number_of_pixels;
   size_t bytes_per_line;
   size_t size_in_bytes;
+  /// What the driver filled in the last frame: size_in_bytes for raw pixels, the JPEG's length for raw_mjpeg.
+  size_t bytes_used;
   v4l2_format v4l2_fmt;
   struct timespec stamp;
 
@@ -219,6 +221,11 @@ public:
   inline size_t get_image_size_in_bytes()
   {
     return m_image.size_in_bytes;
+  }
+
+  inline size_t get_image_bytes_used()
+  {
+    return m_image.bytes_used;
   }
 
   inline size_t get_image_size_in_pixels()
