@@ -82,8 +82,9 @@ void UsbCam::process_image(const char * src, char * & dest, const int & bytes_us
   // TODO(flynneva): could we skip the copy here somehow?
   // If no conversion required, just copy the image from V4L2 buffer
   if (m_image.pixel_format->requires_conversion() == false) {
-    memcpy(dest, src, bytes_used);
-    m_image.bytes_used = bytes_used;
+    // Padded rows can make a raw frame's bytes_used exceed the frame; a JPEG is shorter.
+    m_image.bytes_used = std::min(static_cast<size_t>(bytes_used), m_image.size_in_bytes);
+    memcpy(dest, src, m_image.bytes_used);
   } else {
     m_image.pixel_format->convert(src, dest, bytes_used);
   }

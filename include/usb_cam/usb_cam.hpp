@@ -141,7 +141,7 @@ typedef struct
   size_t number_of_pixels;
   size_t bytes_per_line;
   size_t size_in_bytes;
-  /// What the driver filled in the last frame: size_in_bytes for raw pixels, the JPEG's length for raw_mjpeg.
+  /// Bytes copied from the last frame that needed no conversion: the JPEG's length for raw_mjpeg.
   size_t bytes_used;
   v4l2_format v4l2_fmt;
   struct timespec stamp;
