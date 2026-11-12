@@ -147,6 +147,21 @@ inline io_method_t io_method_from_string(const std::string & str)
 ///   starting up.
 ///
 ///   Inspired by: http://stackoverflow.com/questions/4290834/how-to-get-a-list-of-video-capture-devices-web-cameras-on-linux-ubuntu-c
+/// Whether `device_name` opens as a V4L2 device. Opens that device alone, and closes it: a
+/// scan of every /dev/video* holds other drivers' devices open (a Jetson's Argus CSI sensors,
+/// the other USB cameras) and disturbed their capture.
+inline bool is_v4l2_device(const std::string & device_name)
+{
+  const int fd = open(device_name.c_str(), O_RDONLY);
+  if (fd == -1) {
+    return false;
+  }
+  struct v4l2_capability device_capabilities = {};
+  const bool ok = xioctl(fd, VIDIOC_QUERYCAP, &device_capabilities) != -1;
+  close(fd);
+  return ok;
+}
+
 inline std::map<std::string, v4l2_capability> available_devices()
 {
   // Initialize vector of device strings to fill in
@@ -185,6 +200,7 @@ inline std::map<std::string, v4l2_capability> available_devices()
         } else {
           v4l2_devices[device_name] = device_capabilities;
         }
+        close(fd);
       }
     } else {
       // device doesn't exist, continue

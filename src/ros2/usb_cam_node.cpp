@@ -166,19 +166,13 @@ void UsbCamNode::init()
     m_camera_info->setCameraInfo(*m_camera_info_msg);
   }
 
-  // Check if given device name is an available v4l2 device
-  auto available_devices = usb_cam::utils::available_devices();
-  if (available_devices.find(m_parameters.device_name) == available_devices.end()) {
+  // Check the given device alone: a scan of every device opened the other cameras' too
+  if (!usb_cam::utils::is_v4l2_device(m_parameters.device_name)) {
     RCLCPP_ERROR_STREAM(
       this->get_logger(),
       "Device specified is not available or is not a vaild V4L2 device: `" <<
         m_parameters.device_name << "`"
     );
-    RCLCPP_INFO(this->get_logger(), "Available V4L2 devices are:");
-    for (const auto & device : available_devices) {
-      RCLCPP_INFO_STREAM(this->get_logger(), "    " << device.first);
-      RCLCPP_INFO_STREAM(this->get_logger(), "        " << device.second.card);
-    }
     rclcpp::shutdown();
     return;
   }
